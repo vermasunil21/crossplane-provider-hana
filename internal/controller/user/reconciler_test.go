@@ -63,10 +63,12 @@ func (l *MockLogger) WithValues(_ ...any) logging.Logger { return l }
 
 // mockUserClient implements the user.Client struct methods for testing
 type mockUserClient struct {
-	MockRead                   func(ctx context.Context, parameters *v1alpha1.UserParameters, password string) (observed *v1alpha1.UserObservation, err error)
-	MockCreate                 func(ctx context.Context, parameters *v1alpha1.UserParameters, password string, providers []user.ResolvedUserMapping, jwtProviders []user.ResolvedJWTUserMapping) error
-	MockDelete                 func(ctx context.Context, parameters *v1alpha1.UserParameters) error
-	MockFormatPrivilegeStrings func(privilegeStrings []string) ([]string, error)
+	MockRead                     func(ctx context.Context, parameters *v1alpha1.UserParameters, password string) (observed *v1alpha1.UserObservation, err error)
+	MockCreate                   func(ctx context.Context, parameters *v1alpha1.UserParameters, password string, providers []user.ResolvedUserMapping, jwtProviders []user.ResolvedJWTUserMapping) error
+	MockDelete                   func(ctx context.Context, parameters *v1alpha1.UserParameters) error
+	MockFormatPrivilegeStrings   func(privilegeStrings []string) ([]string, error)
+	MockEnableX509Authentication func(ctx context.Context, username string) error
+	MockUpdateX509Providers      func(ctx context.Context, username string, toAdd, toRemove []user.ResolvedUserMapping) error
 }
 
 // Implement the methods that user.Client struct has
@@ -116,6 +118,16 @@ func (m mockUserClient) UpdatePasswordLifetimeCheck(ctx context.Context, usernam
 }
 
 func (m mockUserClient) UpdateX509Providers(ctx context.Context, username string, toAdd, toRemove []user.ResolvedUserMapping) error {
+	if m.MockUpdateX509Providers != nil {
+		return m.MockUpdateX509Providers(ctx, username, toAdd, toRemove)
+	}
+	return nil
+}
+
+func (m mockUserClient) EnableX509Authentication(ctx context.Context, username string) error {
+	if m.MockEnableX509Authentication != nil {
+		return m.MockEnableX509Authentication(ctx, username)
+	}
 	return nil
 }
 

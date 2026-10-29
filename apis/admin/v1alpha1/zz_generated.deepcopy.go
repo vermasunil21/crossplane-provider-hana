@@ -1367,6 +1367,11 @@ func (in *UserObservation) DeepCopyInto(out *UserObservation) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.IsX509Enabled != nil {
+		in, out := &in.IsX509Enabled, &out.IsX509Enabled
+		*out = new(bool)
+		**out = **in
+	}
 	if in.IsJWTEnabled != nil {
 		in, out := &in.IsJWTEnabled, &out.IsJWTEnabled
 		*out = new(bool)

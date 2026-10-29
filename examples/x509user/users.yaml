@@ -12,6 +12,8 @@ spec:
     username: X509_USER
     isPasswordLifetimeCheckEnabled: false
     authentication:
+      # Configuring mappings also enables X.509 and repairs enablement drift.
+      # An unchanged providerRef mapping is not removed/re-added on reconcile.
       x509Providers:
       - providerRef:
           name: x509provider

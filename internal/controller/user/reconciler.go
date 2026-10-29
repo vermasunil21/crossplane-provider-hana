@@ -200,6 +200,10 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 
 	parameters := handleDefaults(cr)
 
+	if err := c.resolveX509ProviderNames(ctx, parameters); err != nil {
+		return managed.ExternalObservation{}, fmt.Errorf("cannot resolve user X.509 providers: %w", err)
+	}
+
 	if err := c.resolveJWTProviderNames(ctx, parameters); err != nil {
 		c.log.Info("Error resolving JWT provider references", "name", cr.Name, "error", err)
 		return managed.ExternalObservation{}, err
@@ -249,7 +253,11 @@ func (c *external) Observe(ctx context.Context, mg resource.Managed) (managed.Ex
 		return managed.ExternalObservation{}, err
 	}
 
-	setAvailabilityCondition(cr, authError)
+	if authError == nil && !isX509EnabledUpToDate(observed, parameters) {
+		cr.SetConditions(xpv2.Unavailable().WithMessage("X.509 authentication is not enabled"))
+	} else {
+		setAvailabilityCondition(cr, authError)
+	}
 
 	isUpToDate := upToDate(observed, parameters)
 
@@ -298,6 +306,7 @@ func (c *external) checkPrivilegeRoleOverlap(cr *v1alpha1.User, desiredPrivilege
 func upToDate(observed *v1alpha1.UserObservation, desired *v1alpha1.UserParameters) bool {
 	return isPasswordUpToDate(observed, desired) &&
 		isX509MappingsUpToDate(observed, desired) &&
+		isX509EnabledUpToDate(observed, desired) &&
 		isJWTMappingsUpToDate(observed, desired) &&
 		isJWTEnabledUpToDate(observed, desired) &&
 		isClientConnectUpToDate(observed, desired) &&
@@ -322,6 +331,13 @@ func isX509MappingsUpToDate(observed *v1alpha1.UserObservation, desired *v1alpha
 		return utils.ArraysEqual(observed.X509Providers, desired.Authentication.X509Providers)
 	}
 	return len(observed.X509Providers) == 0
+}
+
+func isX509EnabledUpToDate(observed *v1alpha1.UserObservation, desired *v1alpha1.UserParameters) bool {
+	// Do not manage enablement for users without desired X.509 mappings, and
+	// never disable X.509 automatically when the last mapping is removed.
+	return len(desired.Authentication.X509Providers) == 0 ||
+		(observed.IsX509Enabled != nil && *observed.IsX509Enabled)
 }
 
 func isJWTMappingsUpToDate(observed *v1alpha1.UserObservation, desired *v1alpha1.UserParameters) bool {
@@ -457,6 +473,9 @@ func (c *external) Update(ctx context.Context, mg resource.Managed) (managed.Ext
 	}
 
 	if err := c.updateX509Providers(ctx, cr, desired, observed); err != nil {
+		return managed.ExternalUpdate{}, err
+	}
+	if err := c.updateX509Authentication(ctx, cr, desired, observed); err != nil {
 		return managed.ExternalUpdate{}, err
 	}
 
@@ -620,6 +639,17 @@ func (c *external) updateX509Providers(ctx context.Context, cr *v1alpha1.User, d
 	return nil
 }
 
+func (c *external) updateX509Authentication(ctx context.Context, cr *v1alpha1.User, desired *v1alpha1.UserParameters, observed *v1alpha1.UserObservation) error {
+	if isX509EnabledUpToDate(observed, desired) {
+		return nil
+	}
+	if err := c.client.EnableX509Authentication(ctx, desired.Username); err != nil {
+		return fmt.Errorf(errUpdateUser, err)
+	}
+	cr.Status.AtProvider.IsX509Enabled = new(true)
+	return nil
+}
+
 func (c *external) updatePasswordLifetimeCheck(ctx context.Context, cr *v1alpha1.User, desired *v1alpha1.UserParameters, observed *v1alpha1.UserObservation) error {
 	if observed.IsPasswordLifetimeCheckEnabled == nil || *observed.IsPasswordLifetimeCheckEnabled != desired.IsPasswordLifetimeCheckEnabled {
 		c.log.Info("Updating user password lifetime check",
@@ -700,6 +730,10 @@ func (c *external) transformParameters(parameters map[string]string) map[string]
 
 func (c *external) buildDesiredParameters(ctx context.Context, cr *v1alpha1.User) (*v1alpha1.UserParameters, error) {
 	parameters := handleDefaults(cr)
+
+	if err := c.resolveX509ProviderNames(ctx, parameters); err != nil {
+		return nil, fmt.Errorf("cannot resolve user X.509 providers: %w", err)
+	}
 
 	if err := c.resolveJWTProviderNames(ctx, parameters); err != nil {
 		return nil, err
@@ -849,6 +883,23 @@ func (c *external) ResolveUserMappings(ctx context.Context, mappings []v1alpha1.
 		})
 	}
 	return resolved, nil
+}
+
+// resolveX509ProviderNames canonicalizes a copy of the desired mappings before
+// Observe and Update compare them with SYS.X509_USER_MAPPINGS. Drop providerRef
+// from the comparison copy: pointer identity is not part of a database mapping.
+func (c *external) resolveX509ProviderNames(ctx context.Context, params *v1alpha1.UserParameters) error {
+	resolved, err := c.ResolveUserMappings(ctx, params.Authentication.X509Providers, "")
+	if err != nil {
+		return err
+	}
+	for i, mapping := range resolved {
+		params.Authentication.X509Providers[i] = v1alpha1.X509UserMapping{
+			X509ProviderRef: v1alpha1.X509ProviderRef{Name: mapping.Name},
+			SubjectName:     mapping.SubjectName,
+		}
+	}
+	return nil
 }
 
 // ResolveJWTUserMappings turns spec-level JWTUserMapping entries (which may

@@ -478,6 +478,25 @@ func TestRead(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
+			// Existing fixtures return the main SYS.USERS row for every query.
+			// Supply the separate X.509 enablement observation explicitly.
+			queryRow := tc.fields.db.MockQueryRowContext
+			x509Enabled := len(tc.args.parameters.Authentication.X509Providers) > 0
+			tc.fields.db.MockQueryRowContext = func(ctx context.Context, query string, args ...any) *sql.Row {
+				if strings.Contains(query, "SELECT IS_X509_ENABLED") {
+					db, mock, err := sqlmock.New()
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { db.Close() })
+					mock.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"IS_X509_ENABLED"}).AddRow(x509Enabled))
+					return db.QueryRowContext(context.Background(), "SELECT")
+				}
+				return queryRow(ctx, query, args...)
+			}
+			if tc.want.err == nil && tc.want.observed.Username != nil {
+				tc.want.observed.IsX509Enabled = new(x509Enabled)
+			}
 			c := Client{
 				DB:     tc.fields.db,
 				Client: &privilege.PrivilegeClient{DB: tc.fields.db},

@@ -113,6 +113,11 @@ type UserObservation struct {
 	// +kubebuilder:validation:Optional
 	IsClientConnectEnabled *bool `json:"isClientConnectEnabled,omitempty"`
 
+	// IsX509Enabled reflects whether X.509 authentication is enabled. Configured
+	// X509Providers imply enablement; removing mappings does not disable it.
+	// +kubebuilder:validation:Optional
+	IsX509Enabled *bool `json:"isX509Enabled,omitempty"`
+
 	// IsJWTEnabled reflects whether `ALTER USER ... ENABLE JWT` has been
 	// applied to the user.
 	// +kubebuilder:validation:Optional

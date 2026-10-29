@@ -367,6 +367,11 @@ spec:
                     type: boolean
                   isPasswordLifetimeCheckEnabled:
                     type: boolean
+                  isX509Enabled:
+                    description: |-
+                      IsX509Enabled reflects whether X.509 authentication is enabled. Configured
+                      X509Providers imply enablement; removing mappings does not disable it.
+                    type: boolean
                   jwtProviders:
                     items:
                       description: |-

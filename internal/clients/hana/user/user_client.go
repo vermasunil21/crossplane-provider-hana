@@ -81,6 +81,7 @@ type UserClient interface {
 	UpdatePassword(ctx context.Context, username, password string, forceFirstPasswordChange bool) error
 	UpdatePasswordLifetimeCheck(ctx context.Context, username string, isPasswordLifetimeCheckEnabled bool) error
 	UpdateX509Providers(ctx context.Context, username string, toAdd, toRemove []ResolvedUserMapping) error
+	EnableX509Authentication(ctx context.Context, username string) error
 	UpdateJWTProviders(ctx context.Context, username string, toAdd, toRemove []ResolvedJWTUserMapping) error
 	ToggleJWTAuthentication(ctx context.Context, username string, enable bool) error
 	ToggleClientConnect(ctx context.Context, username string, enable bool) error
@@ -182,6 +183,12 @@ func (c Client) Read(ctx context.Context, parameters *v1alpha1.UserParameters, p
 	if err != nil {
 		return observed, err
 	}
+
+	var x509Enabled bool
+	if err := c.QueryRowContext(ctx, "SELECT IS_X509_ENABLED FROM SYS.USERS WHERE USER_NAME = ?", parameters.Username).Scan(&x509Enabled); err != nil {
+		return observed, fmt.Errorf("failed to query X.509 enabled flag: %w", err)
+	}
+	observed.IsX509Enabled = &x509Enabled
 
 	observed.JWTProviders, err = c.queryJWTProviders(ctx, parameters.Username)
 	if err != nil {
@@ -361,6 +368,13 @@ func (c Client) Create(ctx context.Context, parameters *v1alpha1.UserParameters,
 
 	if err := c.UpdateX509Providers(ctx, parameters.Username, providers, nil); err != nil {
 		return err
+	}
+	// ADD IDENTITY only registers the certificate mapping; HANA requires a
+	// separate ENABLE X509 before certificate-based login can succeed.
+	if len(providers) > 0 {
+		if err := c.EnableX509Authentication(ctx, parameters.Username); err != nil {
+			return err
+		}
 	}
 
 	// Enable JWT before we add any identity bindings: ADD IDENTITY ... FOR
@@ -557,6 +571,16 @@ func (c Client) UpdateX509Providers(ctx context.Context, username string, toAdd,
 		}
 	}
 
+	return nil
+}
+
+// EnableX509Authentication enables certificate login without changing mappings.
+// Removing the last mapping deliberately does not disable X.509 authentication.
+func (c Client) EnableX509Authentication(ctx context.Context, username string) error {
+	query := fmt.Sprintf(`ALTER USER "%s" ENABLE X509`, utils.EscapeDoubleQuotes(username))
+	if _, err := c.ExecContext(ctx, query); err != nil {
+		return fmt.Errorf("failed to enable X.509 authentication for user %s: %w", username, err)
+	}
 	return nil
 }
 
